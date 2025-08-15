@@ -1,5 +1,6 @@
-flask
-flask-sqlalchemy
-flask-login
-gunicorn
-apscheduler
+flask==2.3.2
+flask-sqlalchemy==3.0.3
+flask-login==0.6.2
+gunicorn==20.1.0
+apscheduler==3.10.1
+python-dotenv==1.0.0
