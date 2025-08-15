@@ -1,6 +1,6 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_login import LoginManager, login_user, login_required, current_user, logout_user
+from flask import Flask, render_template, request, redirect, url_for, flash, abort
+from flask_login import LoginManager, login_user, login_required, current_user, logout_user, UserMixin
 from database import db, Provider, MaxAccount
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -12,7 +12,7 @@ app = Flask(__name__, template_folder='templates')
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 
 # Конфигурация БД
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///rent.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:////tmp/rent.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
@@ -46,8 +46,7 @@ def create_admin():
             admin = Provider(
                 username='admin',
                 password=generate_password_hash('admin123'),
-                is_admin=True,
-                is_active=True
+                is_admin=True
             )
             db.session.add(admin)
             db.session.commit()
@@ -66,20 +65,22 @@ def login():
         user = Provider.query.filter_by(username=username).first()
         
         if user and check_password_hash(user.password, password):
-            if user.is_active:
-                login_user(user)
-                return redirect(url_for('dashboard'))
-            flash('Ваш аккаунт деактивирован')
-        else:
-            flash('Неверные учетные данные')
+            login_user(user)
+            return redirect(url_for('dashboard'))
+        flash('Неверные учетные данные')
     return render_template('login.html')
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
     accounts = MaxAccount.query.filter_by(provider_id=current_user.id).all()
+    free_accounts = len([a for a in accounts if not a.is_rented])
+    rented_accounts = len(accounts) - free_accounts
+    
     return render_template('dashboard.html', 
                          accounts=accounts,
+                         free_accounts=free_accounts,
+                         rented_accounts=rented_accounts,
                          tariffs=TARIFFS,
                          current_user=current_user)
 
@@ -88,6 +89,10 @@ def dashboard():
 def logout():
     logout_user()
     return redirect(url_for('index'))
+
+@app.route('/test404')
+def test_404():
+    abort(404)
 
 @app.errorhandler(404)
 def page_not_found(e):
