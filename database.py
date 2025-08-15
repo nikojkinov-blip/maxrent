@@ -12,12 +12,10 @@ class Provider(db.Model, UserMixin):
     wallet_address = db.Column(db.String(120))
     balance = db.Column(db.Float, default=0.0)
     is_admin = db.Column(db.Boolean, default=False)
-    is_active = db.Column(db.Boolean, default=True)  # Обязательное поле для Flask-Login
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Рекомендуемое поле
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Метод для Flask-Login
-    def get_id(self):
-        return str(self.id)
+    accounts = db.relationship('MaxAccount', backref='provider', lazy=True)
 
 class MaxAccount(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -27,7 +25,4 @@ class MaxAccount(db.Model):
     is_rented = db.Column(db.Boolean, default=False)
     rented_until = db.Column(db.DateTime)
     provider_id = db.Column(db.Integer, db.ForeignKey('provider.id'))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Рекомендуемое поле
-
-    # Связь с провайдером
-    provider = db.relationship('Provider', backref='accounts')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
