@@ -1,28 +1,36 @@
 import os
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
-from flask_login import LoginManager, login_user, login_required, current_user, logout_user
+from flask_login import LoginManager, login_user, login_required, current_user, logout_user, UserMixin
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
-# Инициализация Flask и БД
+# Инициализация приложения
 app = Flask(__name__, template_folder='templates')
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///rent.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
-# Модели БД
-class Provider(db.Model):
+# Модели базы данных
+class Provider(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(120), nullable=False)
+    is_active = db.Column(db.Boolean, default=True)  # Обязательное поле для Flask-Login
     is_admin = db.Column(db.Boolean, default=False)
     chat_id = db.Column(db.String(50), nullable=True)
     balance = db.Column(db.Float, default=0.0)
     wallet_address = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def get_id(self):
+        return str(self.id)
 
 class MaxAccount(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -34,18 +42,14 @@ class MaxAccount(db.Model):
     provider_id = db.Column(db.Integer, db.ForeignKey('provider.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Инициализация Flask-Login
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
-
-# Конфигурация
+# Настройки тарифов
 TARIFFS = {
     '1_hour': {'price': 7, 'duration': 60, 'emoji': '⏳'},
     '2_hours': {'price': 14, 'duration': 120, 'emoji': '⌛'}
 }
 
 # Планировщик задач
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(daemon=True)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
@@ -55,13 +59,12 @@ def load_user(user_id):
 
 def create_admin():
     with app.app_context():
-        if not Provider.query.first():
+        if not Provider.query.filter_by(is_admin=True).first():
             admin = Provider(
-                username='admin',
-                password='admin123',
+                username=os.environ.get('ADMIN_USERNAME', 'admin'),
+                password=os.environ.get('ADMIN_PASSWORD', 'admin123'),
                 is_admin=True,
-                chat_id='ADMIN_CHAT_ID',
-                wallet_address='TWalletAddress'
+                is_active=True
             )
             db.session.add(admin)
             db.session.commit()
@@ -75,13 +78,28 @@ def index():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+
     if request.method == 'POST':
         user = Provider.query.filter_by(username=request.form['username']).first()
+        
         if user and user.password == request.form['password']:
-            login_user(user)
+            if not user.is_active:
+                flash('Аккаунт деактивирован', 'danger')
+                return redirect(url_for('login'))
+                
+            login_user(user, remember=True)
             return redirect(url_for('dashboard'))
+        
         flash('Неверные учетные данные', 'danger')
     return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
 
 @app.route('/dashboard')
 @login_required
@@ -107,14 +125,10 @@ def rent_account(account_id, tariff):
         return jsonify({
             'login': account.login,
             'password': account.password,
-            'until': account.rented_until.strftime('%H:%M')
+            'until': account.rented_until.strftime('%Y-%m-%d %H:%M')
         })
     flash('Аккаунт уже арендован', 'warning')
     return redirect(url_for('dashboard'))
-
-@app.errorhandler(404)
-def page_not_found(e):
-    return render_template('404.html'), 404
 
 def check_expired_rentals():
     with app.app_context():
@@ -126,11 +140,20 @@ def check_expired_rentals():
             acc.is_rented = False
             db.session.commit()
 
+@app.errorhandler(404)
+def page_not_found(e):
+    return render_template('404.html'), 404
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         create_admin()
-        scheduler.add_job(check_expired_rentals, 'interval', minutes=1)
+        scheduler.add_job(
+            check_expired_rentals,
+            'interval',
+            minutes=1,
+            id='rental_checker'
+        )
     
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
