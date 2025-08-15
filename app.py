@@ -6,12 +6,18 @@ from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
-# Инициализация приложения
+# ================================================
+# НАСТРОЙКА ПРИЛОЖЕНИЯ
+# ================================================
 app = Flask(__name__, template_folder='templates')
-app.secret_key = os.environ.get('SECRET_KEY', 'default-secret-key')
 
-# Конфигурация БД
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///rent.db')
+# Безопасность
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+app.config['SESSION_COOKIE_SECURE'] = True  # Только HTTPS
+app.config['REMEMBER_COOKIE_SECURE'] = True
+
+# База данных
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///prod.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
@@ -20,64 +26,92 @@ db.init_app(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# Настройки тарифов
+# ================================================
+# КОНСТАНТЫ И СЕРВИСЫ
+# ================================================
 TARIFFS = {
-    '1_hour': {'price': 7, 'duration': 60, 'emoji': '⏳'},
-    '2_hours': {'price': 14, 'duration': 120, 'emoji': '⌛'}
+    '1_hour': {'price': 7, 'duration': 60},
+    '2_hours': {'price': 14, 'duration': 120}
 }
 
-# Планировщик задач
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(daemon=True)
 scheduler.start()
-atexit.register(lambda: scheduler.shutdown())
+atexit.register(scheduler.shutdown)
 
+# ================================================
+# АВТОРИЗАЦИЯ
+# ================================================
 @login_manager.user_loader
 def load_user(user_id):
     return Provider.query.get(int(user_id))
 
-def create_admin():
+def create_first_admin():
     with app.app_context():
-        if not Provider.query.first():
+        if not Provider.query.filter_by(is_admin=True).first():
             admin = Provider(
-                username='admin',
-                password='admin123',
+                username=os.environ.get('ADMIN_LOGIN', 'admin'),
+                password=os.environ.get('ADMIN_PASSWORD', 'admin123'),
                 is_admin=True
             )
             db.session.add(admin)
             db.session.commit()
 
+# ================================================
+# РОУТИНГ
+# ================================================
 @app.route('/')
 def index():
-    try:
-        return render_template('index.html')
-    except Exception as e:
-        return f"Ошибка загрузки шаблона: {str(e)}", 500
+    return render_template('index.html')
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    
     if request.method == 'POST':
         user = Provider.query.filter_by(username=request.form['username']).first()
         if user and user.password == request.form['password']:
-            login_user(user)
+            login_user(user, remember=True)
             return redirect(url_for('dashboard'))
-        flash('Неверные учетные данные')
+        flash('Неверные учетные данные', 'danger')
     return render_template('login.html')
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    accounts = MaxAccount.query.all()
+    accounts = MaxAccount.query.order_by(MaxAccount.id.desc()).limit(50).all()
     return render_template('dashboard.html', 
-                         accounts=accounts,
-                         tariffs=TARIFFS)
+                        accounts=accounts,
+                        tariffs=TARIFFS,
+                        current_time=datetime.utcnow())
 
-@app.errorhandler(404)
-def page_not_found(e):
-    return render_template('404.html'), 404
-
-if __name__ == '__main__':
+# ================================================
+# ЗАПУСК
+# ================================================
+def initialize_app():
     with app.app_context():
         db.create_all()
-        create_admin()
+        create_first_admin()
+        
+        # Ежеминутная проверка аренды
+        scheduler.add_job(
+            func=check_rental_expiry,
+            trigger='interval',
+            minutes=1
+        )
+
+def check_rental_expiry():
+    with app.app_context():
+        expired = MaxAccount.query.filter(
+            MaxAccount.is_rented == True,
+            MaxAccount.rented_until < datetime.utcnow()
+        ).all()
+        
+        for acc in expired:
+            acc.is_rented = False
+            db.session.commit()
+
+if __name__ == '__main__':
+    initialize_app()
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
