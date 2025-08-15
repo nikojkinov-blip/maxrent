@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MaxRent - Панель управления</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary: #6c5ce7;
+            --secondary: #a29bfe;
+        }
+        body { background: #f8f9fa; }
+        .navbar { background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .card { border: none; border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+        .badge-rented { background: #ff7675; }
+        .badge-free { background: #00b894; }
+        .btn-rent { background: var(--primary); color: white; }
+        .btn-rent:hover { background: var(--secondary); }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg mb-4">
+        <div class="container">
+            <a class="navbar-brand fw-bold text-primary" href="#">
+                <i class="bi bi-currency-bitcoin"></i> MaxRent
+            </a>
+            <div class="d-flex">
+                <span class="me-3">Админ</span>
+                <a href="/logout" class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-box-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mb-5">
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card bg-primary text-white p-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-0">Свободно</h5>
+                            <h2 class="mb-0">{{ free_accounts }}</h2>
+                        </div>
+                        <i class="bi bi-unlock fs-1"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card bg-success text-white p-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-0">Арендовано</h5>
+                            <h2 class="mb-0">{{ rented_accounts }}</h2>
+                        </div>
+                        <i class="bi bi-lock fs-1"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card p-4 mb-4">
+            <h5 class="card-title d-flex align-items-center">
+                <i class="bi bi-list-check me-2"></i> Доступные аккаунты
+            </h5>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Логин</th>
+                            <th>Статус</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for acc in accounts %}
+                        <tr>
+                            <td>{{ acc.login }}</td>
+                            <td>
+                                <span class="badge rounded-pill {{ 'badge-rented' if acc.is_rented else 'badge-free' }}">
+                                    {{ "Арендован" if acc.is_rented else "Свободен" }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if not acc.is_rented %}
+                                <div class="btn-group">
+                                    <a href="/rent/{{ acc.id }}/1_hour" class="btn btn-sm btn-rent">
+                                        <i class="bi bi-lightning"></i> 1 час (7 USDT)
+                                    </a>
+                                    <a href="/rent/{{ acc.id }}/2_hours" class="btn btn-sm btn-rent">
+                                        <i class="bi bi-lightning-charge"></i> 2 часа (14 USDT)
+                                    </a>
+                                </div>
+                                {% else %}
+                                <span class="text-muted">
+                                    До {{ acc.rented_until.strftime('%H:%M') }}
+                                </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const rentLinks = document.querySelectorAll('a[href^="/rent/"]');
+            rentLinks.forEach(link => {
+                link.addEventListener('click', async function(e) {
+                    e.preventDefault();
+                    const response = await fetch(this.href);
+                    const data = await response.json();
+                    
+                    const modalHtml = `
+                        <div class="modal fade" id="accountDataModal" tabindex="-1">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header bg-primary text-white">
+                                        <h5 class="modal-title">🔑 Данные аккаунта</h5>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="alert alert-success">
+                                            <h5>Аккаунт успешно арендован!</h5>
+                                            <p class="mb-0">Тариф: ${data.tariff} (${data.price} USDT)</p>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Логин</label>
+                                            <div class="input-group">
+                                                <input type="text" class="form-control" value="${data.login}" readonly id="loginField">
+                                                <button class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText('${data.login}')">
+                                                    <i class="bi bi-clipboard"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Пароль</label>
+                                            <div class="input-group">
+                                                <input type="text" class="form-control" value="${data.password}" readonly id="passwordField">
+                                                <button class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText('${data.password}')">
+                                                    <i class="bi bi-clipboard"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <p class="text-muted mb-0">Аренда активна до: ${data.until}</p>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Закрыть</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    document.body.insertAdjacentHTML('beforeend', modalHtml);
+                    const modal = new bootstrap.Modal(document.getElementById('accountDataModal'));
+                    modal.show();
+                    
+                    modal._element.addEventListener('hidden.bs.modal', function() {
+                        window.location.reload();
+                    });
+                });
+            });
+        });
+    </script>
+</body>
+</html>
